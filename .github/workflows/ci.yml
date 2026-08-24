@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+      - name: Install development dependencies
+        run: python -m pip install -r requirements-dev.txt
+      - name: Repository hygiene
+        run: python scripts/check_repo_hygiene.py
+      - name: Ruff
+        run: python -m ruff check .
+      - name: Bandit
+        run: python -m bandit -r . -q -x .venv,.codeguard_tmp,tests
+      - name: Tests
+        run: python -m pytest --cov=. --cov-report=term-missing
+
+  docker-integration:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+      - run: python -m pip install -r requirements-dev.txt
+      - name: Build isolated test runner
+        run: docker build -f Dockerfile.test-runner -t codeguard-test-runner:latest .
+      - name: Docker integration test
+        env:
+          CODEGUARD_RUN_DOCKER_TESTS: "1"
+        run: python -m pytest -m docker -q
