@@ -6,7 +6,7 @@ import json
 import subprocess  # nosec B404
 import time
 from collections.abc import Callable
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from analysis.models import StaticAnalysisResult, StaticFinding, ToolExecution
 from security.redaction import sanitize_exception, sanitize_text
@@ -142,14 +142,28 @@ class StaticAnalyzer:
 
     def _parse_bandit(self, output: str, repo_path: Path) -> list[StaticFinding]:
         payload = json.loads(output or "{}")
-        return [
-            StaticFinding(
-                tool="bandit",
-                file_path=self._relative(item.get("filename", "unknown"), repo_path),
-                line=item.get("line_number"),
-                rule_id=item.get("test_id") or "unknown",
-                severity=(item.get("issue_severity") or "unknown").lower(),
-                message=item.get("issue_text") or "Bandit finding",
+        findings: list[StaticFinding] = []
+        for item in payload.get("results", []):
+            file_path = self._relative(item.get("filename", "unknown"), repo_path)
+            rule_id = item.get("test_id") or "unknown"
+            if rule_id == "B101" and self._is_test_file(file_path):
+                continue
+            findings.append(
+                StaticFinding(
+                    tool="bandit",
+                    file_path=file_path,
+                    line=item.get("line_number"),
+                    rule_id=rule_id,
+                    severity=(item.get("issue_severity") or "unknown").lower(),
+                    message=item.get("issue_text") or "Bandit finding",
+                )
             )
-            for item in payload.get("results", [])
-        ]
+        return findings
+
+    @staticmethod
+    def _is_test_file(file_path: str) -> bool:
+        path = PurePosixPath(file_path.replace("\\", "/"))
+        return "tests" in path.parts or (
+            path.suffix == ".py"
+            and (path.name.startswith("test_") or path.name.endswith("_test.py"))
+        )
