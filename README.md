@@ -120,3 +120,7 @@ The real-world validation set is small. Regression-to-source-line association is
 ## License
 
 CodeGuard's own source is licensed under [Apache-2.0](LICENSE). Dependencies keep their separate upstream licenses; in particular, Psycopg is LGPL-3.0-only.
+
+## Contributing
+
+Issues and focused pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for local checks and guidance on reporting problems without exposing secrets.
