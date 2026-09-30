@@ -16,28 +16,28 @@ A conventional “diff to LLM” review can invent findings, attach them to unsu
 - Ruff and Bandit analysis of both revisions; pytest BASE/HEAD comparison distinguishes introduced regressions from existing failures.
 - Docker-isolated test execution with a read-only repository mount, disabled test network, and resource limits.
 - Evidence Registry with deterministic IDs, strict structured LLM proposals, and post-model grounding.
-- FastAPI control plane, PostgreSQL audit records, Redis queue, and Celery worker.
+- FastAPI control plane, PostgreSQL analysis records, Redis queue, and Celery worker.
 - Ollama, OpenAI-compatible, OpenRouter, Anthropic, Gemini, and explicit fake-provider adapters.
 - Read-only real-PR validation against the separate [codeguard-demo](https://github.com/shuhanzhou01-stack/codeguard-demo) repository.
 
 ## Architecture
 
 ```mermaid
-flowchart LR
-    GH[GitHub PR] --> API[FastAPI]
+flowchart TB
+    PR["GitHub PR"] --> API["FastAPI"]
     API --> PG[(PostgreSQL)]
-    API --> R[(Redis queue)]
-    R --> W[Celery worker]
-    W --> PC[Pinned PR context and diff]
-    PC --> SA[Ruff and Bandit BASE/HEAD]
-    PC --> DX[Docker pytest BASE/HEAD]
-    SA --> ER[Deterministic Evidence Registry]
-    DX --> ER
-    PC --> ER
-    ER --> LLM[Structured LLM review: select IDs]
-    LLM --> RES[Deterministic evidence resolution and grounding]
-    RES --> PG
-    PG --> REPORT[Structured report / API]
+    API --> REDIS[(Redis queue)]
+    REDIS --> WORKER["Celery worker"]
+    WORKER --> CONTEXT["Pinned PR context"]
+    CONTEXT --> STATIC["Ruff + Bandit<br/>BASE / HEAD"]
+    CONTEXT --> TESTS["Docker pytest<br/>BASE / HEAD"]
+    CONTEXT --> REGISTRY["Evidence Registry"]
+    STATIC --> REGISTRY
+    TESTS --> REGISTRY
+    REGISTRY --> LLM["LLM selects evidence IDs"]
+    LLM --> GROUND["Deterministic grounding"]
+    GROUND --> PG
+    PG --> REPORT["Structured report / API"]
 ```
 
 The worker owns the Docker socket and is a trusted component; analyzed repository tests do not receive that socket. See [ARCHITECTURE.md](ARCHITECTURE.md) for trust boundaries, execution stages, and failure behavior.
