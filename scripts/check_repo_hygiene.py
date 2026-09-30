@@ -12,8 +12,19 @@ FORBIDDEN_PARTS = {
     ".mypy_cache",
     ".codeguard_tmp",
     "htmlcov",
+    ".vscode",
+    ".fleet",
 }
-FORBIDDEN_NAMES = {".env", ".coverage", "coverage.xml"}
+FORBIDDEN_NAMES = {
+    ".env",
+    ".coverage",
+    "coverage.xml",
+    "id_rsa",
+    "id_ed25519",
+    ".npmrc",
+    ".pypirc",
+}
+FORBIDDEN_SUFFIXES = {".pem", ".key", ".p12", ".pfx", ".db", ".sqlite", ".sqlite3"}
 MAX_FILE_BYTES = 10 * 1024 * 1024
 
 
@@ -45,7 +56,14 @@ def check_repo(repo_root: Path) -> list[str]:
         path = PurePosixPath(raw_path.replace("\\", "/"))
         if path.as_posix() == ".codeguard_tmp/.gitkeep":
             continue
-        if path.name in FORBIDDEN_NAMES or FORBIDDEN_PARTS.intersection(path.parts):
+        name = path.name.lower()
+        if (
+            name in FORBIDDEN_NAMES
+            or (name.startswith(".env.") and name != ".env.example")
+            or path.suffix.lower() in FORBIDDEN_SUFFIXES
+            or name.endswith((".sqlite-wal", ".sqlite-shm", ".db-journal"))
+            or FORBIDDEN_PARTS.intersection(path.parts)
+        ):
             violations.append(f"forbidden generated/private path: {path.as_posix()}")
             continue
         absolute = repo_root.joinpath(*path.parts)

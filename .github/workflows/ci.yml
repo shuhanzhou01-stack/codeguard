@@ -24,9 +24,9 @@ jobs:
       - name: Ruff
         run: python -m ruff check .
       - name: Bandit
-        run: python -m bandit -r . -q -x .venv,.codeguard_tmp,tests
+        run: python scripts/run_bandit.py
       - name: Tests
-        run: python -m pytest --cov=. --cov-report=term-missing
+        run: python -m pytest --cov --cov-report=term-missing
 
   docker-integration:
     if: github.event_name == 'workflow_dispatch'

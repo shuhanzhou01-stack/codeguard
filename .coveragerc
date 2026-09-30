@@ -1,0 +1,32 @@
+[run]
+source =
+    analysis
+    context
+    execution
+    llm
+    security
+    celery_app
+    config
+    database
+    db_models
+    github_client
+    github_webhook
+    main
+    models
+    repo_manager
+    schemas
+    services
+    tasks
+    test_runner
+    workspace
+omit =
+    */tests/*
+    */alembic/*
+    */evaluation/*
+    */.venv/*
+    */.codeguard_tmp/*
+    */demo.py
+
+[report]
+exclude_lines =
+    pragma: no cover

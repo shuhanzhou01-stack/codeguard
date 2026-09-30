@@ -1,5 +1,9 @@
-# Third-Party Notices
+# Third-party notices
 
-CodeGuard V1/V1.1 was independently implemented. No source code was copied from PR-Agent/Qodo PR-Agent, OpenHands, SWE-agent, or SWE-bench. Their publicly described architectural ideas influenced the boundaries documented in `README.md` and `ARCHITECTURE.md`.
+CodeGuard's own source is licensed under [Apache-2.0](LICENSE). Dependencies and base images are **not relicensed** by that file; they retain their respective upstream terms. No third-party source is intentionally vendored into this repository.
 
-Runtime and development dependencies remain subject to their own upstream licenses. Installing `requirements.txt` or using the referenced Docker images does not relicense those projects under CodeGuard's license.
+The pinned Python dependencies include MIT, BSD-3-Clause, and Apache-2.0 packages. Notably, `psycopg` and `psycopg-binary` declare **LGPL-3.0-only**. They are used as separate dependencies, not copied into CodeGuard source. Anyone distributing a built image or dependency bundle should retain upstream copyright/license notices and check the obligations of Psycopg and any bundled native components. The pinned versions and exact dependency set are in `requirements.txt` and `requirements-dev.txt`; this document is not an exhaustive SBOM.
+
+Docker base images (`python:3.13-slim`, `postgres:17-alpine`, and `redis:7-alpine`) also carry independent package licenses. Review their upstream notices when redistributing an image, rather than treating this repository's Apache-2.0 license as covering the entire image.
+
+The design discusses other public developer tools and evaluation projects for context; those names do not imply endorsement or transfer of their licenses.

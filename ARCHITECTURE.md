@@ -1,206 +1,102 @@
-# CodeGuard V1.1.1 Correctness Hardening Architecture
+# CodeGuard v1.2.0 architecture
 
-## System view
+CodeGuard is an evidence-grounded GitHub PR verification platform. The API and queue coordinate work; deterministic analyzers establish facts; the LLM proposes explanations by selecting existing evidence IDs; a resolver constructs authoritative report metadata.
+
+## Components and data flow
 
 ```mermaid
 flowchart LR
-    subgraph External
-        GH[GitHub REST + Webhooks]
-        LP[LLM Provider]
-    end
-
-    subgraph ControlPlane[CodeGuard control plane]
-        API[FastAPI]
-        PG[(PostgreSQL)]
-        R[(Redis)]
-        CW[Trusted Celery Worker]
-    end
-
-    subgraph AnalysisPlane[Per-run analysis plane]
-        BW[Base RepositoryWorkspace]
-        HW[Head RepositoryWorkspace]
-        PC[PRContext\npolicy from trusted BASE]
-        ST[StaticAnalyzer]
-        DP[Dependency preparation/cache]
-        DBE[DockerExecutionBackend]
-        RE[ReviewEngine]
-        GR[FindingGroundingValidator\nHEAD vs delta evidence]
-        RB[Report Builder]
-    end
-
-    GH --> API
-    API --> PG
-    API --> R
-    R --> CW
-    CW -->|pinned compare + tarballs| GH
-    CW --> BW
-    CW --> HW --> PC
-    BW --> ST
-    HW --> ST --> RE
-    BW --> DP
-    HW --> DP --> DBE --> RE
-    RE --> LP --> RE
-    RE --> GR --> RB --> PG
-    RB -. optional persistent comment .-> GH
+    GH[GitHub REST / signed webhook] --> API[FastAPI]
+    API --> PG[(PostgreSQL)]
+    API --> R[(Redis)]
+    R --> CW[Trusted Celery worker]
+    CW --> SNAP[Pinned BASE / HEAD snapshots]
+    SNAP --> CTX[PR context and changed hunks]
+    SNAP --> SA[Ruff + Bandit on both revisions]
+    SNAP --> DX[Docker pytest on both revisions]
+    CTX --> ER[Evidence Registry]
+    SA --> ER
+    DX --> ER
+    ER --> LP[Configured LLM provider]
+    LP --> RS[Strict ID validation and deterministic resolution]
+    RS --> GR[Grounding validator and deduplication]
+    GR --> PG
+    PG --> OUT[Report API]
+    GR -. optional, disabled by default .-> GH
 ```
+
+FastAPI stores the PR and analysis request; PostgreSQL holds pinned commit SHAs, run state, test executions, full evidence registry, and final findings. Redis brokers Celery jobs. The worker owns the GitHub and Docker connections. A target repository's test container does not receive the Docker socket.
 
 ## Analysis sequence
 
 ```mermaid
 sequenceDiagram
     participant Client
-    participant API
+    participant API as FastAPI
     participant DB as PostgreSQL
-    participant Queue as Redis/Celery
-    participant Worker
-    participant GitHub
-    participant Sandbox as Docker pytest
-    participant LLM
+    participant Q as Redis/Celery
+    participant W as Worker
+    participant GH as GitHub
+    participant D as Docker pytest
+    participant L as LLM
 
     Client->>API: POST /pull-requests/.../analyze
-    API->>GitHub: confirm current PR base/head (manual trigger)
-    API->>DB: create AnalysisRun(pending, pinned SHAs, trigger)
-    API->>Queue: enqueue run ID
+    API->>GH: confirm PR and pin BASE/HEAD SHAs
+    API->>DB: create pending run with pinned SHAs
+    API->>Q: enqueue run ID
     API-->>Client: 202 Accepted
-    Queue->>Worker: run_analysis(run ID)
-    Worker->>DB: conditional UPDATE pending -> running
-    DB-->>Worker: exactly one claimant receives rowcount=1
-    Worker->>DB: load pinned base/head SHAs
-    Worker->>GitHub: pinned compare + base/head tarballs
-    Worker->>Worker: two safe workspaces + BASE policy + base/head Ruff/Bandit multiset delta
-    Worker->>Sandbox: prepare dependency images (registry network)
-    Worker->>Sandbox: same pytest command on base/head (no network, read-only)
-    Sandbox-->>Worker: JUnit testcase sets + environment status + delta
-    Worker->>LLM: pinned facts + deltas + JSON schema
-    LLM-->>Worker: structured review JSON
-    Worker->>Worker: validate file/path/hunk/HEAD-vs-delta evidence per finding
-    Worker->>Worker: recalculate public risk/summary from publishable findings
-    Worker->>DB: report + deduplicated findings + grounding state
-    opt Publishing enabled
-        Worker->>GitHub: create/update marker comment
-    end
-    Worker->>DB: status=completed
-    Worker->>Worker: cleanup workspace/container
+    Q->>W: claim pending run atomically
+    W->>GH: fetch pinned compare and source archives
+    W->>W: safe workspaces; PR context; Ruff/Bandit BASE and HEAD
+    W->>D: same pytest command on BASE and HEAD
+    D-->>W: JUnit outcomes and execution status
+    W->>W: classify deltas and build Evidence Registry
+    W->>L: facts, registry, and strict proposal schema
+    L-->>W: findings selecting evidence_ids only
+    W->>W: validate IDs; resolve file/line/rule/test facts
+    W->>W: existing grounding validation and safe deduplication
+    W->>DB: report, registry, resolved findings, audit state
+    DB-->>Client: report through API
 ```
 
-## State and failure model
+The worker fetches pinned compare data and separate BASE/HEAD archives; it does not silently switch to a newer PR head. Repository policy files are loaded from the trusted BASE revision. HEAD policy edits are ordinary diff content and do not control the current review. Diff compression keeps complete file/hunk units inside a bounded prompt.
 
-```mermaid
-stateDiagram-v2
-    [*] --> pending
-    pending --> running: atomic conditional claim succeeds
-    running --> completed: report persisted
-    running --> failed: critical stage raises
-    failed --> [*]
-    completed --> [*]
-```
+## Evidence Registry and grounding
 
-Static tools and the local test backend are evidence producers: unavailable/failed evidence is recorded and review continues. A grounding failure is isolated to one finding. Pinned GitHub comparison/context construction, workspace creation, structured LLM parsing, and report persistence are critical stages. Any critical exception records `failed_stage`, a redacted bounded `error_summary`, and `finished_at`.
+The registry is built from deterministic inputs: changed diff hunks, HEAD static findings with BASE/HEAD classification, confirmed BASE-pass-to-HEAD-fail tests, and other observed HEAD test failures. Entries have per-analysis IDs such as `E001`. They retain type, source/tool, classification, rule and severity when supplied, file and line range when supported, test name, BASE/HEAD results, related changed hunk, and message.
 
-Only `pending` is claimable. The database conditional update and affected-row count prevent duplicate workers from reaching Docker, LLM, TestExecution, or ReviewReport work. `failed` and `completed` are terminal; an explicit retry creates a new AnalysisRun and preserves the prior audit trail.
+The model's proposal schema contains `title`, `description`, `severity`, `category`, and `evidence_ids`. It does **not** contain authoritative file, line, rule, or evidence-citation fields. An unknown ID fails grounding. CodeGuard resolves selected IDs back to registry entries and then applies the existing path, hunk, static-delta, and test-delta validator. Its final file/line and evidence metadata come from deterministic entries, not model prose.
 
-## Module responsibilities
+For regressions, a BASE PASS → HEAD FAIL testcase is evidence by itself. A conservative Python AST check associates a direct test import/call with a unique changed function hunk. Ambiguous or unsupported associations remain test-level evidence without an invented source line; the test file is not automatically used as a source finding location. Multiple test IDs may support one finding. Obvious duplicates are merged only when the same uniquely linked changed hunk and category establish a common source; uncertain causes remain separate.
 
-| Module | Responsibility |
+The prompt-visible registry is persisted even for clean reports. Public risk and summary are recalculated from publishable findings; rejected or partially grounded proposals remain auditable. A large registry that exceeds the configured prompt budget fails closed rather than silently dropping evidence IDs.
+
+## Execution and trust boundaries
+
+- GitHub archive extraction rejects absolute paths, traversal, links, and special files. Workspace file access stays inside the extracted root.
+- Static tools use argument lists without a shell. Both revisions are scanned, and duplicate-aware deltas distinguish existing, resolved, and introduced findings.
+- Dependency preparation builds CodeGuard's generated image from a supported manifest. Registry network access is allowed only at this separate preparation boundary; the target repository Dockerfile is not run.
+- BASE and HEAD use the same pytest/JUnit command. The test phase uses a read-only repository mount, no network, resource limits, dropped capabilities, `no-new-privileges`, and forced cleanup. Installation/collection/timeout/environment failures do not become confirmed code regressions.
+- The trusted worker controls the Docker socket. This is a local/development execution model, **not** production multi-tenant isolation.
+- Prompt redaction filters known secret patterns before provider transmission. Repository workspace creation rejects common credential files. Neither control proves that every possible secret format is caught.
+- Provider failures remain failures; no real-provider request silently falls back to `fake`. GitHub comment publishing is opt-in and disabled by default.
+
+## State, persistence, and failure behavior
+
+A run moves from `pending` to `running` only through an atomic database claim; only one worker proceeds. It then becomes `completed` or `failed`, both terminal. A new request creates a new run and retains prior audit history. Critical failures in pinned GitHub context, workspace creation, structured response parsing, or persistence mark the run failed with a bounded, redacted stage/error summary. Unavailable static/test evidence is recorded rather than mislabelled as a code regression. One invalid model finding does not erase other grounded findings.
+
+Alembic owns production schema changes. The additive v1.2.0 migrations persist selected evidence IDs, resolved finding metadata, and the complete report-level registry; previous migration history and the `v1.1.1` tag remain unchanged.
+
+| Area | Main modules |
 | --- | --- |
-| `main.py`, `schemas.py` | FastAPI compatibility APIs, report/history APIs, signed webhook boundary |
-| `services.py`, `db_models.py`, `database.py` | Atomic run claim, transactions, ORM schema, report/finding persistence and delivery deduplication |
-| `github_client.py` | GitHub REST fetch/pagination and marker-based summary publishing |
-| `workspace.py`, `repo_manager.py` | Snapshot metadata, safe extraction, bounded path access and cleanup |
-| `context/` | Typed changed files/PR context, repo instructions and hunk-aware compression |
-| `analysis/static_analyzer.py`, `analysis/models.py` | Base/head Ruff/Bandit execution, duplicate-aware fingerprint multisets and existing/resolved/introduced deltas |
-| `analysis/grounding.py` | Repository-relative path, diff-hunk, HEAD evidence and static/test delta attribution validation |
-| `execution/environment.py` | Dependency manifest detection, fingerprinting and Python-version cache keys |
-| `execution/` | JUnit testcase comparison, environment/code failure separation, network-separated preparation and constrained local Docker tests |
-| `llm/` | Provider interface, provider HTTP adapters, prompt contract and report schemas |
-| `analysis/review_engine.py` | Evidence prompt construction, structured response parsing, grounding and verified public report recalculation |
-| `analysis/report_builder.py` | Finding fingerprints and persistent Markdown summary |
-| `analysis/pipeline.py`, `tasks.py` | Stage orchestration, status transitions, timing, cleanup and Celery entrypoints |
-| `evaluation/` | JSONL datasets, metrics, benchmark, ablations and future adapter contract |
-| `security/redaction.py` | Central bounded credential/query/database/process-secret sanitization |
-| `demo.py` | Offline deterministic end-to-end V1.1.1 smoke flow |
+| API and webhook | `main.py`, `schemas.py`, `github_webhook.py` |
+| State and persistence | `services.py`, `db_models.py`, `database.py`, `alembic/` |
+| GitHub and workspaces | `github_client.py`, `repo_manager.py`, `workspace.py` |
+| Context and deterministic analysis | `context/`, `analysis/static_analyzer.py`, `execution/` |
+| Registry and grounded review | `analysis/evidence_registry.py`, `analysis/evidence_resolution.py`, `analysis/grounding.py`, `llm/` |
+| Queue and orchestration | `celery_app.py`, `tasks.py`, `analysis/pipeline.py` |
+| Evaluation and validation | `evaluation/`, `tests/`, `docs/REAL_WORLD_VALIDATION.md` |
 
-## Data model
+## Current limits
 
-```mermaid
-erDiagram
-    PULL_REQUESTS ||--o{ ANALYSIS_RUNS : has
-    ANALYSIS_RUNS ||--o{ TEST_EXECUTIONS : records
-    ANALYSIS_RUNS ||--o| REVIEW_REPORTS : produces
-    REVIEW_REPORTS ||--o{ REVIEW_FINDINGS : contains
-
-    PULL_REQUESTS {
-        int id PK
-        string repository
-        int pr_number
-        string analysis_status
-    }
-    ANALYSIS_RUNS {
-        int id PK
-        int pull_request_id FK
-        string status
-        string failed_stage
-        text error_summary
-        string base_sha
-        string head_sha
-        string trigger_source
-        int webhook_delivery_id FK
-    }
-    TEST_EXECUTIONS {
-        int id PK
-        int analysis_run_id FK
-        string status
-        int exit_code
-        bool timed_out
-        int duration_ms
-        string backend
-        string revision_role
-        string commit_sha
-        json passed_tests
-        json failed_tests
-        json error_tests
-        json skipped_tests
-    }
-    REVIEW_REPORTS {
-        int id PK
-        int analysis_run_id FK_UK
-        string risk_level
-        string raw_model_risk
-        text raw_model_summary
-        string model
-        json test_summary
-        json static_summary
-    }
-    REVIEW_FINDINGS {
-        int id PK
-        int review_report_id FK
-        string severity
-        string file_path
-        int line_start
-        string fingerprint
-        string grounding_status
-        text grounding_notes
-    }
-```
-
-`WEBHOOK_DELIVERIES` is independent operational state keyed by GitHub’s unique delivery ID.
-
-## Evidence and trust boundaries
-
-The GitHub snapshots and their code are untrusted. Archive entries are validated before extraction. Repository policy (`AGENTS.md`/`CODEGUARD.md`) is loaded only from the trusted pinned BASE revision; a HEAD edit remains diff evidence and cannot change the current review policy. Static tools inspect files without a shell. Dependency preparation uses only CodeGuard's generated Dockerfile and detected manifest content; the repository Dockerfile is ignored. Preparation may contact package registries and execute third-party package build logic, so it is a separate trust boundary. Repository code is never installed on the host.
-
-Tests use the prepared image but run with networking disabled, a read-only repository volume, dropped capabilities, `no-new-privileges`, PID/memory/time limits and forced cleanup. Both revisions use the same pytest/JUnit command. Dependency installation, collection, timeout, and execution failures are environment evidence and never populate introduced test regressions. The LLM receives only the bounded normalized PR context and recorded deltas. Its output remains untrusted after Pydantic validation until deterministic grounding classifies every finding and public risk/summary are recalculated from grounded/partial findings.
-
-All external/persistence/logging exception boundaries sanitize authorization headers, common provider/GitHub tokens, secret query parameters, database credentials, and known process secrets. Logging carries run/repository/PR/base/head/stage fields but never intentionally carries prompts or environment dumps.
-
-The Celery worker is trusted because it owns the Docker socket. Test containers never receive that socket. Local Docker is intentionally documented as a development execution backend, not a production multi-tenant boundary.
-
-## Compatibility boundary
-
-The original top-level APIs and task names remain. `context.pr_context` and `test_runner.run_pytest` are compatibility wrappers around the V1 packages. The V1.1.1 schema revision is additive and preserves the earlier migration history.
-
-## Current limitations
-
-- Execution is Python-first and provides basic dependency-aware Python execution for root `requirements.txt` and standard root PEP 621 dependencies only.
-- The evaluation tooling is a Review Engine Evaluation Harness. Its synthetic fixture is a smoke test; real labelled datasets remain future validation work.
-- For complex diverged branches, V1.1.1 verifies the pinned base-tip and head revisions; merge-result verification is not yet modeled.
+CodeGuard is Python-first and recognizes root `requirements.txt` or standard root PEP 621 dependencies. It verifies pinned base-tip and head revisions, not a synthesized merge result. The real-world validation currently covers two controlled PRs; the local 7B model's behavior cannot be generalized from them. The separate evaluation harness has synthetic fixtures but no statistical real-world benchmark.
