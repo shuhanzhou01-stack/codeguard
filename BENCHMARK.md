@@ -1,27 +1,15 @@
-# CodeGuard Review Engine Evaluation Harness
+# Evaluation harness — synthetic smoke result, not a benchmark
 
-Dataset: `evaluation\datasets\fixture.jsonl`
-Provider/model: `fake` / `codeguard-fake-v1`
-Prompt/dataset version: `codeguard-review-v1.1.1` / `dataset-v1`
-Status: `completed`
+This file records a historical run of the Review Engine evaluation harness on `evaluation/datasets/fixture.jsonl`. It has **one labelled synthetic case**, uses `fake / codeguard-fake-v1`, and predates the v1.2.0 Evidence Registry. It verifies that the harness can parse a fixture and calculate metrics; it does **not** measure real-model quality or full-platform performance.
 
-This is a Review Engine Evaluation Harness, not a full CodeGuard end-to-end benchmark. Fixture/synthetic datasets are smoke tests; real labelled datasets remain future validation work.
-Matching is deterministic and one-to-one: normalized file and category must match; labelled lines must overlap; labels without lines require match_keywords in prediction text/evidence.
-Unlabelled cases report insufficient_labelled_cases and never receive fabricated ground truth.
+| Historical fixture field | Observed value |
+| --- | --- |
+| Prompt / dataset version | `codeguard-review-v1.1.1` / `dataset-v1` |
+| Run status | `completed` |
+| Cases / labelled cases | 1 / 1 |
+| Fixture precision / recall / F1 | 1.0 / 1.0 / 1.0 |
+| Fixture file / line / severity accuracy | 1.0 / 1.0 / 1.0 |
+| Fixture test classification | 1.0 |
+| Model tokens / cost | 0 / 0 (fake provider) |
 
-| Metric | Value |
-| --- | ---: |
-| case_count | 1 |
-| labelled_case_count | 1 |
-| finding_precision | 1.0 |
-| finding_recall | 1.0 |
-| finding_f1 | 1.0 |
-| file_localization_accuracy | 1.0 |
-| line_range_hit_rate | 1.0 |
-| severity_classification_accuracy | 1.0 |
-| test_pass_fail_classification | 1.0 |
-| mean_analysis_latency_ms | 0.0 |
-| mean_llm_latency_ms | 0.0 |
-| total_token_usage | 0 |
-| cost_observation_count | 1 |
-| total_estimated_cost | 0.0 |
+The metrics above are expected for the controlled fixture and have no statistical meaning. The unlabelled `evaluation/datasets/real_world_template.jsonl` correctly reports `insufficient_labelled_cases`; it must not be presented as real-world accuracy. For the two real GitHub PR validation cases and their limitations, see [REAL_WORLD_VALIDATION.md](docs/REAL_WORLD_VALIDATION.md). A larger human-labelled dataset is still needed before making benchmark claims.
