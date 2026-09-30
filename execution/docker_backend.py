@@ -22,6 +22,13 @@ from security.redaction import sanitize_exception, sanitize_text
 DEFAULT_RUNNER_IMAGE = "codeguard-test-runner:latest"
 MAX_ARCHIVE_BYTES = 100 * 1024 * 1024
 SKIP_PARTS = {".git", ".venv", "__pycache__", ".pytest_cache"}
+SENSITIVE_FILE_NAMES = {
+    "id_rsa",
+    "id_ed25519",
+    "credentials.json",
+    "service-account.json",
+}
+SENSITIVE_FILE_SUFFIXES = {".pem", ".key", ".p12", ".pfx"}
 JUNIT_XML_PATH = "/tmp/codeguard-junit.xml"  # nosec B108
 MAX_JUNIT_XML_BYTES = 16 * 1024 * 1024
 
@@ -73,6 +80,20 @@ def create_repository_archive(repo_path: Path) -> bytes:
                 continue
             if path.is_symlink() or not path.is_file():
                 continue
+            name = path.name.lower()
+            sensitive_env = (
+                (name == ".env" or name.startswith(".env."))
+                and name != ".env.example"
+            )
+            if (
+                sensitive_env
+                or name in SENSITIVE_FILE_NAMES
+                or path.suffix.lower() in SENSITIVE_FILE_SUFFIXES
+            ):
+                raise ValueError(
+                    "Repository contains a sensitive file that cannot be copied "
+                    f"into the test container: {relative.as_posix()}"
+                )
             total_size += path.stat().st_size
             if total_size > MAX_ARCHIVE_BYTES:
                 raise ValueError("Repository exceeds the test archive size limit")

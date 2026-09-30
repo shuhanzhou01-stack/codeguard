@@ -203,6 +203,7 @@ class ReviewReportDB(Base):
     estimated_cost: Mapped[float | None] = mapped_column(Float, nullable=True)
     test_summary: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     static_summary: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    evidence_registry: Mapped[list | None] = mapped_column(JSON, nullable=True)
     publish_status: Mapped[str] = mapped_column(
         String(50), nullable=False, default="disabled"
     )
@@ -240,6 +241,8 @@ class ReviewFindingDB(Base):
     line_end: Mapped[int | None] = mapped_column(nullable=True)
     description: Mapped[str] = mapped_column(Text, nullable=False)
     evidence: Mapped[str] = mapped_column(Text, nullable=False)
+    evidence_ids: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    resolved_evidence: Mapped[list | None] = mapped_column(JSON, nullable=True)
     suggestion: Mapped[str] = mapped_column(Text, nullable=False)
     confidence: Mapped[float] = mapped_column(Float, nullable=False)
     fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)

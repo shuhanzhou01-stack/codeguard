@@ -6,10 +6,14 @@ from dataclasses import replace
 import pytest
 import requests
 
+from analysis.models import StaticAnalysisResult
 from analysis.pipeline import AnalysisPipeline
+from analysis.review_engine import ReviewEngine
 from config import Settings
+from context.builder import build_pr_context
 from db_models import AnalysisRunDB
-from llm.client import GeminiProvider, OpenAICompatibleProvider
+from execution.base import TestExecutionResult as ExecutionResult
+from llm.client import FakeLLMProvider, GeminiProvider, OpenAICompatibleProvider
 from security.redaction import REDACTED, sanitize_exception, sanitize_text
 from services import request_pull_request_analysis, save_pull_request
 
@@ -71,6 +75,40 @@ class RecordingSession:
     def post(self, *args, **kwargs):
         self.kwargs = kwargs
         return GeminiResponse()
+
+
+class OpenAICompatibleResponse:
+    def raise_for_status(self):
+        return None
+
+    def json(self):
+        return {"choices": [{"message": {"content": "{}"}}], "usage": {}}
+
+
+class RecordingOpenAISession:
+    def __init__(self):
+        self.kwargs = None
+
+    def post(self, *args, **kwargs):
+        self.kwargs = kwargs
+        return OpenAICompatibleResponse()
+
+
+@pytest.mark.parametrize(
+    ("provider", "expected_timeout"),
+    [("ollama", 300), ("openai", 120)],
+)
+def test_local_ollama_has_longer_read_timeout(provider, expected_timeout):
+    session = RecordingOpenAISession()
+    settings = replace(
+        Settings.from_env(),
+        llm_provider=provider,
+        llm_model="test-model",
+        llm_api_key=None if provider == "ollama" else "test-key",
+        llm_api_base="http://provider.test/v1",
+    )
+    OpenAICompatibleProvider(settings, session=session).complete("prompt")
+    assert session.kwargs["timeout"] == expected_timeout
 
 
 def test_gemini_key_is_sent_in_header_not_query():
@@ -145,3 +183,47 @@ def test_pipeline_persisted_error_and_log_are_redacted(
 def test_sanitize_exception_is_bounded():
     output = sanitize_exception(RuntimeError("x" * 10_000), max_length=100)
     assert len(output) == 100
+
+
+def test_llm_prompt_redacts_secret_from_changed_code(monkeypatch):
+    secret = "github_pat_ABCDEFGHIJKLMNOPQRSTUVWX1234567890"
+    monkeypatch.setenv("GITHUB_TOKEN", secret)
+    diff = (
+        "diff --git a/app.py b/app.py\n"
+        "@@ -0,0 +1 @@\n"
+        f"+TOKEN = '{secret}'\n"
+    )
+    context = build_pr_context(
+        repository="acme/widget",
+        pr_number=1,
+        pr_data={
+            "title": "Add token",
+            "body": "",
+            "user": {"login": "dev"},
+            "base": {"sha": "base"},
+            "head": {"sha": "head"},
+        },
+        changed_files=[{"filename": "app.py", "status": "added", "additions": 1}],
+        diff=diff,
+    )
+
+    class RecordingProvider(FakeLLMProvider):
+        prompt = None
+
+        def complete(self, prompt):
+            self.prompt = prompt
+            return super().complete(prompt)
+
+    provider = RecordingProvider()
+    ReviewEngine(provider).review(
+        context,
+        StaticAnalysisResult(),
+        ExecutionResult(status="skipped", backend="fixture"),
+    )
+    assert secret not in provider.prompt
+    assert REDACTED in provider.prompt
+
+
+def test_private_key_block_is_redacted():
+    private_key = "-----BEGIN PRIVATE KEY-----\nsecret-data\n-----END PRIVATE KEY-----"
+    assert private_key not in sanitize_text(private_key)

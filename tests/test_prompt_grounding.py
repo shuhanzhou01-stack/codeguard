@@ -83,6 +83,13 @@ def test_prompt_does_not_duplicate_changed_file_patch():
     assert prompt.count("+result = value") == 1
 
 
+def test_prompt_specifies_machine_matchable_evidence_references():
+    prompt = build_review_prompt(_context(), StaticAnalysisResult(), _tests())
+    assert "EVIDENCE REGISTRY" in prompt
+    assert "Never invent an ID" in prompt
+    assert "Do not output file_path" in prompt
+
+
 def test_prompt_respects_diff_plus_overhead_budget():
     large_diff = DIFF + ("+large_context_line\n" * 10_000)
     context = build_pr_context(
@@ -308,16 +315,10 @@ def test_review_engine_recalculates_hallucinated_critical_report():
                 "category": "security",
                 "severity": "critical",
                 "title": "Hallucinated critical",
-                "file_path": "missing.py",
-                "line_start": 1,
-                "line_end": 1,
                 "description": "Not in the repository.",
-                "evidence": "Invented evidence.",
                 "suggestion": "None.",
                 "confidence": 0.99,
-                "evidence_sources": [
-                    {"source": "diff", "identifier": "missing.py:1"}
-                ],
+                "evidence_ids": ["E999"],
             }
         ],
     }

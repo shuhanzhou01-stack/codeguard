@@ -4,8 +4,13 @@ import io
 import tarfile
 
 import docker
+import pytest
 
-from execution.docker_backend import DockerExecutionBackend, parse_pytest_junit_xml
+from execution.docker_backend import (
+    DockerExecutionBackend,
+    create_repository_archive,
+    parse_pytest_junit_xml,
+)
 from execution.environment import (
     dependency_cache_key,
     detect_dependency_manifest,
@@ -43,6 +48,20 @@ def test_standard_pyproject_dependencies_are_detected(tmp_path):
 
 def test_missing_dependency_manifest_is_explicit(tmp_path):
     assert detect_dependency_manifest(tmp_path) is None
+
+
+@pytest.mark.parametrize("secret_name", [".env", ".env.production", "id_rsa", "private.pem"])
+def test_repository_archive_rejects_secret_files(tmp_path, secret_name):
+    (tmp_path / "test_ok.py").write_text("def test_ok(): assert True\n")
+    (tmp_path / secret_name).write_text("sensitive value\n")
+    with pytest.raises(ValueError, match="sensitive file"):
+        create_repository_archive(tmp_path)
+
+
+def test_repository_archive_keeps_safe_example(tmp_path):
+    (tmp_path / ".env.example").write_text("GITHUB_TOKEN=\n")
+    with tarfile.open(fileobj=io.BytesIO(create_repository_archive(tmp_path))) as archive:
+        assert ".env.example" in archive.getnames()
 
 
 def test_pytest_junit_xml_records_testcase_level_outcomes():

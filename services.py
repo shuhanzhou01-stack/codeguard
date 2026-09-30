@@ -196,6 +196,7 @@ def persist_review_report(
     existing.estimated_cost = report.estimated_cost
     existing.test_summary = report.test_summary
     existing.static_summary = report.static_summary
+    existing.evidence_registry = report.evidence_registry
     existing.publish_status = publish_status
 
     fingerprints: set[str] = set()
@@ -214,6 +215,8 @@ def persist_review_report(
                 line_end=finding.line_end,
                 description=finding.description,
                 evidence=finding.evidence,
+                evidence_ids=finding.evidence_ids,
+                resolved_evidence=finding.resolved_evidence,
                 suggestion=finding.suggestion,
                 confidence=finding.confidence,
                 fingerprint=fingerprint,

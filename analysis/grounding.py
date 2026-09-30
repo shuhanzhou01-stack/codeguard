@@ -18,6 +18,7 @@ HUNK_HEADER_RE = re.compile(
     re.MULTILINE,
 )
 RULE_ID_RE = re.compile(r"\b[A-Z][A-Z0-9_-]*\d{2,5}\b", re.IGNORECASE)
+REGISTRY_MARKER_RE = re.compile(r"\bE\d{3,}\s+\[")
 ATTRIBUTION_RE = re.compile(
     r"\b(introduced|new(?:ly)? issue|regression|caused by (?:this|the) (?:pr|pull request))\b",
     re.IGNORECASE,
@@ -220,7 +221,10 @@ class FindingGroundingValidator:
 
         claim_text = f"{finding.title} {finding.description} {finding.evidence}"
         evidence_lower = finding.evidence.lower()
-        mentioned_rules = {item.lower() for item in RULE_ID_RE.findall(finding.evidence)}
+        evidence_without_ids = REGISTRY_MARKER_RE.sub("[", finding.evidence)
+        mentioned_rules = {
+            item.lower() for item in RULE_ID_RE.findall(evidence_without_ids)
+        }
         static_ids = {
             item.rule_id.lower()
             for item in static_result.findings

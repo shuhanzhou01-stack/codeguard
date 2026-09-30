@@ -206,6 +206,7 @@ def read_analysis_report(analysis_run_id: int, db: DbSession) -> dict:
         "estimated_cost": report.estimated_cost,
         "test_summary": report.test_summary,
         "static_summary": report.static_summary,
+        "evidence_registry": report.evidence_registry or [],
         "publish_status": report.publish_status,
         "grounding_summary": {
             "grounded": sum(
@@ -230,6 +231,8 @@ def read_analysis_report(analysis_run_id: int, db: DbSession) -> dict:
                 "line_end": item.line_end,
                 "description": item.description,
                 "evidence": item.evidence,
+                "evidence_ids": item.evidence_ids or [],
+                "resolved_evidence": item.resolved_evidence or [],
                 "suggestion": item.suggestion,
                 "confidence": item.confidence,
                 "fingerprint": item.fingerprint,

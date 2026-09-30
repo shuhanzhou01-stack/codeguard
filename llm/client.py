@@ -81,7 +81,7 @@ class OpenAICompatibleProvider(LLMProvider):
                     {"role": "user", "content": prompt},
                 ],
             },
-            timeout=120,
+            timeout=300 if self.settings.llm_provider == "ollama" else 120,
         )
         payload = response.json()
         choice = payload["choices"][0]

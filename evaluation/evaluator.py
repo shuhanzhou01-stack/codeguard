@@ -9,6 +9,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from analysis.evidence_registry import build_evidence_registry
 from analysis.models import StaticAnalysisResult
 from analysis.review_engine import ReviewEngine
 from config import Settings
@@ -84,6 +85,44 @@ def create_evaluation_provider(
     return create_llm_provider(settings)
 
 
+def _scripted_fixture_with_registry_ids(
+    scripted: dict | None,
+    context,
+    static_result: StaticAnalysisResult,
+    test_result: TestExecutionResult,
+) -> dict | None:
+    """Migrate synthetic fixture predictions, never production provider output."""
+    if scripted is None:
+        return None
+    registry = build_evidence_registry(context, static_result, test_result)
+    migrated = {key: value for key, value in scripted.items() if key != "findings"}
+    migrated["findings"] = []
+    allowed = {
+        "category", "severity", "title", "description", "suggestion",
+        "confidence", "evidence_ids",
+    }
+    for finding in scripted.get("findings", []):
+        model_finding = {key: value for key, value in finding.items() if key in allowed}
+        if "evidence_ids" not in model_finding:
+            path = finding.get("file_path")
+            line = finding.get("line_start")
+            model_finding["evidence_ids"] = [
+                item.id
+                for item in registry.items
+                if item.file_path == path
+                and (
+                    line is None
+                    or (
+                        item.line_start is not None
+                        and item.line_end is not None
+                        and item.line_start <= line <= item.line_end
+                    )
+                )
+            ]
+        migrated["findings"].append(model_finding)
+    return migrated
+
+
 def evaluate_cases(
     cases: list[EvaluationCase],
     variant: Variant = "full_evidence",
@@ -145,7 +184,11 @@ def evaluate_cases(
         prompt_fingerprint = hashlib.sha256(prompt.encode()).hexdigest()
         if provider is None:
             scripted = case.ablation_responses.get(variant) or case.llm_response
-            case_provider: LLMProvider = FakeLLMProvider(scripted)
+            case_provider: LLMProvider = FakeLLMProvider(
+                _scripted_fixture_with_registry_ids(
+                    scripted, context, static_result, test_result
+                )
+            )
         else:
             case_provider = provider
         report = ReviewEngine(case_provider).review(

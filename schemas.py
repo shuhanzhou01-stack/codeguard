@@ -49,6 +49,8 @@ class ReviewFindingResponse(BaseModel):
     line_end: int | None
     description: str
     evidence: str
+    evidence_ids: list[str]
+    resolved_evidence: list[dict]
     suggestion: str
     confidence: float
     fingerprint: str
@@ -68,6 +70,7 @@ class ReviewReportResponse(BaseModel):
     estimated_cost: float | None
     test_summary: dict
     static_summary: dict
+    evidence_registry: list[dict]
     publish_status: str
     grounding_summary: dict[str, int]
     findings: list[ReviewFindingResponse]

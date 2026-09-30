@@ -22,6 +22,11 @@ DATABASE_URL_RE = re.compile(
 KNOWN_TOKEN_RE = re.compile(
     r"(?i)\b(?:github_pat_[A-Za-z0-9_]+|gh[pousr]_[A-Za-z0-9]+|sk-[A-Za-z0-9_-]{8,})\b"
 )
+PRIVATE_KEY_BLOCK_RE = re.compile(
+    r"-----BEGIN (?P<kind>(?:RSA |EC |OPENSSH |DSA )?)PRIVATE KEY-----"
+    r".*?-----END (?P=kind)PRIVATE KEY-----",
+    re.DOTALL,
+)
 
 
 def _process_secret_values() -> list[str]:
@@ -48,6 +53,7 @@ def sanitize_text(
     text = QUERY_SECRET_RE.sub(rf"\1{REDACTED}", text)
     text = DATABASE_URL_RE.sub(rf"\1{REDACTED}\2", text)
     text = KNOWN_TOKEN_RE.sub(REDACTED, text)
+    text = PRIVATE_KEY_BLOCK_RE.sub(REDACTED, text)
     return text[:max_length]
 
 

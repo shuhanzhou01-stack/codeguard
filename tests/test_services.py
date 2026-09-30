@@ -32,6 +32,10 @@ def test_database_service_persists_report_and_deduplicates_findings(db):
         line_end=8,
         description="Loop includes the sentinel.",
         evidence="Changed loop uses <=.",
+        evidence_ids=["E001"],
+        resolved_evidence=[
+            {"id": "E001", "type": "diff_hunk", "file_path": "app.py"}
+        ],
         suggestion="Use <.",
         confidence=0.8,
     )
@@ -41,6 +45,9 @@ def test_database_service_persists_report_and_deduplicates_findings(db):
         findings=[item, item.model_copy()],
         test_summary={"status": "passed"},
         static_summary={"finding_count": 0},
+        evidence_registry=[
+            {"id": "E001", "type": "diff_hunk", "file_path": "app.py"}
+        ],
         model="fake",
         prompt_version="v1",
     )
@@ -49,6 +56,9 @@ def test_database_service_persists_report_and_deduplicates_findings(db):
     assert stored is not None
     assert len(stored.findings) == 1
     assert len(stored.findings[0].fingerprint) == 64
+    assert stored.evidence_registry[0]["id"] == "E001"
+    assert stored.findings[0].evidence_ids == ["E001"]
+    assert stored.findings[0].resolved_evidence[0]["file_path"] == "app.py"
 
 
 def test_analysis_run_atomic_claim_succeeds_exactly_once(session_factory):

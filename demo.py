@@ -9,10 +9,12 @@ from dataclasses import replace
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
+from analysis.evidence_registry import build_evidence_registry
 from analysis.models import StaticAnalysisResult, StaticFinding, ToolExecution
 from analysis.pipeline import AnalysisPipeline
 from analysis.review_engine import ReviewEngine
 from config import Settings
+from context.builder import build_pr_context
 from database import Base
 from execution.base import ExecutionBackend, TestExecutionResult
 from llm.client import FakeLLMProvider
@@ -134,6 +136,23 @@ def run_demo() -> dict:
     finally:
         db.close()
 
+    fixture_context = build_pr_context(
+        repository="codeguard/demo",
+        pr_number=7,
+        pr_data=PR_DATA,
+        changed_files=[{"filename": "runner.py", "status": "modified"}],
+        diff=DIFF,
+    )
+    fixture_registry = build_evidence_registry(
+        fixture_context,
+        FakeStaticAnalyzer().analyze(None),
+        FakeExecutionBackend().run_tests(None, 1),
+    )
+    fixture_evidence_ids = [
+        item.id
+        for item in fixture_registry.items
+        if item.file_path == "runner.py" and item.type in {"diff_hunk", "static"}
+    ]
     response = {
         "summary": "Shell execution is directly reachable from the changed function.",
         "risk_level": "high",
@@ -142,13 +161,10 @@ def run_demo() -> dict:
                 "category": "security",
                 "severity": "high",
                 "title": "Shell command injection",
-                "file_path": "runner.py",
-                "line_start": 4,
-                "line_end": 4,
                 "description": "The changed function passes its argument to a shell.",
-                "evidence": "The diff contains subprocess.run(value, shell=True), and Bandit emitted B602.",
                 "suggestion": "Use a fixed argv list and shell=False.",
                 "confidence": 0.99,
+                "evidence_ids": fixture_evidence_ids,
             }
         ],
     }

@@ -22,6 +22,7 @@ def finding_fingerprint(finding: ReviewFinding) -> str:
         "line_start": finding.line_start,
         "line_end": finding.line_end,
         "title": finding.title.strip().lower(),
+        "evidence_ids": sorted(set(finding.evidence_ids)),
     }
     encoded = json.dumps(canonical, sort_keys=True, separators=(",", ":")).encode()
     return hashlib.sha256(encoded).hexdigest()
